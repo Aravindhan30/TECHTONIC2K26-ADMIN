@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
   <title>TECH TONIC 2K26 - Admin Panel</title>
   <link
     href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Poppins:wght@300;400;600;700&display=swap"
@@ -497,10 +497,23 @@
       <div class="number" id="totalCount">0</div>
       <div class="label">Total Loaded</div>
     </div>
+    <div class="stat-card">
+      <div class="number" id="approvedAllTime">0</div>
+      <div class="label">Approved (All Time)</div>
+    </div>
   </div>
 
   <!-- Cards Container -->
   <div id="container"></div>
+
+  <!-- Image Preview Modal -->
+  <div id="imgModal"
+    style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:999;justify-content:center;align-items:center;flex-direction:column;">
+    <button onclick="document.getElementById('imgModal').style.display='none'"
+      style="position:absolute;top:15px;right:20px;background:none;border:none;color:#fff;font-size:28px;cursor:pointer;">✕</button>
+    <img id="imgPreview" style="max-width:90%;max-height:80%;border-radius:12px;border:2px solid var(--gold);" />
+    <p style="color:#888;margin-top:10px;font-size:12px;">Payment Screenshot</p>
+  </div>
 
   <!-- Toast -->
   <div class="toast" id="toast"></div>
@@ -508,8 +521,13 @@
   <script>
 
     const webAppURL = "https://script.google.com/macros/s/AKfycbwaoKsR6Fpm7y5nepY9LYJVioV-Zp9FORtztmE63sU24BueUVI1O1AuuCUlla8Ne5_pfA/exec";
+    const ADMIN_PASS = "123";
 
-    /* ── Toast System ── */
+    /* Load persistent approval count */
+    let allTimeApproved = parseInt(localStorage.getItem("tt26_approved_count") || "0", 10);
+    document.getElementById("approvedAllTime").textContent = allTimeApproved;
+
+    /* Toast */
     function showToast(msg, type) {
       const toast = document.getElementById("toast");
       toast.textContent = msg;
@@ -517,22 +535,46 @@
       setTimeout(() => { toast.className = "toast"; }, 3000);
     }
 
-    /* ── Load Data ── */
-    function loadData() {
+    /* Convert Google Drive URL to embeddable preview */
+    function getDrivePreviewURL(url) {
+      if (!url) return "";
+      /* Handle /file/d/ID/view format */
+      let match = url.match(/\/file\/d\/([^/]+)/);
+      if (match) return "https://drive.google.com/uc?export=view&id=" + match[1];
+      /* Handle ?id=ID format */
+      match = url.match(/[?&]id=([^&]+)/);
+      if (match) return "https://drive.google.com/uc?export=view&id=" + match[1];
+      /* Handle open?id=ID */
+      match = url.match(/open\?id=([^&]+)/);
+      if (match) return "https://drive.google.com/uc?export=view&id=" + match[1];
+      return url;
+    }
 
+    /* Show image in modal */
+    function showProofImage(url) {
+      const previewURL = getDrivePreviewURL(url);
+      document.getElementById("imgPreview").src = previewURL;
+      document.getElementById("imgModal").style.display = "flex";
+    }
+
+    /* Load Data */
+    function loadData() {
       const key = document.getElementById("key").value;
-      if (!key) { showToast("Please enter the admin key", "error"); return; }
+      if (key !== ADMIN_PASS) {
+        showToast("❌ Invalid Password", "error");
+        return;
+      }
 
       const container = document.getElementById("container");
       container.innerHTML = '<div class="loading">Loading registrations...</div>';
       document.getElementById("statsBar").style.display = "flex";
 
-      fetch(webAppURL + "?admin=list&key=" + key)
+      fetch(webAppURL + "?admin=list&key=TT26_ADMIN_123")
         .then(res => res.json())
         .then(data => {
 
           if (data === "UNAUTHORIZED") {
-            showToast("❌ Invalid Admin Key", "error");
+            showToast("❌ Server Auth Failed", "error");
             container.innerHTML = '';
             document.getElementById("statsBar").style.display = "none";
             return;
@@ -540,6 +582,7 @@
 
           document.getElementById("pendingCount").textContent = data.length;
           document.getElementById("totalCount").textContent = data.length;
+          document.getElementById("approvedAllTime").textContent = allTimeApproved;
 
           container.innerHTML = "";
 
@@ -553,9 +596,12 @@
             const card = document.createElement("div");
             card.className = "reg-card";
 
-            const proofHTML = item.paymentProof
-              ? `<a href="${item.paymentProof}" target="_blank" class="proof-link">📎 View Payment Proof</a><br>`
-              : `<span style="font-size:12px;color:#666;">No proof uploaded</span><br>`;
+            let proofHTML = '<span style="font-size:12px;color:#666;">No proof uploaded</span><br>';
+            if (item.paymentProof) {
+              const previewURL = getDrivePreviewURL(item.paymentProof);
+              proofHTML = `<a href="javascript:void(0)" onclick="showProofImage('${item.paymentProof}')" class="proof-link">📎 View Payment Proof</a>
+              <a href="${previewURL}" target="_blank" class="proof-link" style="margin-left:8px;">↗ Open in Tab</a><br>`;
+            }
 
             card.innerHTML = `
         <div class="name">${item.name}</div>
@@ -585,19 +631,21 @@
         });
     }
 
-    /* ── Approve ── */
+    /* Approve */
     function approve(row, btn) {
-
       btn.disabled = true;
       btn.textContent = "...";
 
-      const key = document.getElementById("key").value;
-
-      fetch(webAppURL + "?admin=approve&row=" + row + "&key=" + key)
+      fetch(webAppURL + "?admin=approve&row=" + row + "&key=TT26_ADMIN_123")
         .then(res => res.text())
         .then(msg => {
           showToast("✅ Registration Approved!", "success");
-          // Animate card removal
+
+          /* Update persistent count */
+          allTimeApproved++;
+          localStorage.setItem("tt26_approved_count", allTimeApproved);
+          document.getElementById("approvedAllTime").textContent = allTimeApproved;
+
           const card = btn.closest(".reg-card");
           card.style.transition = "all 0.4s ease";
           card.style.opacity = "0";
@@ -611,17 +659,14 @@
         });
     }
 
-    /* ── Reject ── */
+    /* Reject */
     function reject(row, btn) {
-
       if (!confirm("Are you sure you want to reject this registration?")) return;
 
       btn.disabled = true;
       btn.textContent = "...";
 
-      const key = document.getElementById("key").value;
-
-      fetch(webAppURL + "?admin=reject&row=" + row + "&key=" + key)
+      fetch(webAppURL + "?admin=reject&row=" + row + "&key=TT26_ADMIN_123")
         .then(res => res.text())
         .then(msg => {
           showToast("❌ Registration Rejected", "error");
@@ -638,7 +683,7 @@
         });
     }
 
-    /* ── Update Count ── */
+    /* Update Count */
     function updateCount() {
       const remaining = document.querySelectorAll(".reg-card").length;
       document.getElementById("pendingCount").textContent = remaining;
@@ -648,7 +693,7 @@
       }
     }
 
-    /* ── Enter key to login ── */
+    /* Enter key to login */
     document.getElementById("key").addEventListener("keydown", function (e) {
       if (e.key === "Enter") loadData();
     });
