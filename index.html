@@ -72,6 +72,13 @@
       backdrop-filter: blur(15px);
     }
 
+    .header-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+
     .header h1 {
       font-family: 'Cinzel', serif;
       font-size: clamp(16px, 4.5vw, 24px);
@@ -85,6 +92,99 @@
       color: #888;
       letter-spacing: 1px;
       text-transform: uppercase;
+    }
+
+    /* ── Notification Bell ── */
+    .notif-bell {
+      position: relative;
+      cursor: pointer;
+      font-size: 24px;
+      line-height: 1;
+      animation: none;
+      user-select: none;
+    }
+
+    .notif-bell.ringing {
+      animation: bellRing 0.6s ease-in-out;
+    }
+
+    .notif-badge {
+      position: absolute;
+      top: -6px;
+      right: -10px;
+      background: #ef4444;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      min-width: 18px;
+      height: 18px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 4px;
+      font-family: 'Poppins', sans-serif;
+      display: none;
+    }
+
+    .notif-badge.visible {
+      display: flex;
+    }
+
+    @keyframes bellRing {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      15% {
+        transform: rotate(14deg);
+      }
+
+      30% {
+        transform: rotate(-14deg);
+      }
+
+      45% {
+        transform: rotate(10deg);
+      }
+
+      60% {
+        transform: rotate(-10deg);
+      }
+
+      75% {
+        transform: rotate(4deg);
+      }
+
+      100% {
+        transform: rotate(0deg);
+      }
+    }
+
+    /* ── Notification Toast (special) ── */
+    .notif-toast {
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-20px);
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      border: 1px solid var(--gold);
+      border-radius: 14px;
+      padding: 14px 22px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--gold);
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease, transform 0.4s ease;
+      box-shadow: 0 8px 30px rgba(212, 175, 55, 0.2);
+      white-space: nowrap;
+    }
+
+    .notif-toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
     }
 
     /* ── Login Section ── */
@@ -477,9 +577,18 @@
 
   <!-- Header -->
   <div class="header">
-    <h1>TECH TONIC 2K26</h1>
+    <div class="header-row">
+      <h1>TECH TONIC 2K26</h1>
+      <div class="notif-bell" id="notifBell" title="Registration Notifications">
+        🔔
+        <span class="notif-badge" id="notifBadge">0</span>
+      </div>
+    </div>
     <p>Admin Panel</p>
   </div>
+
+  <!-- Notification Toast -->
+  <div class="notif-toast" id="notifToast"></div>
 
   <!-- Login -->
   <div class="login-section">
@@ -523,8 +632,9 @@
     const webAppURL = "https://script.google.com/macros/s/AKfycbwaoKsR6Fpm7y5nepY9LYJVioV-Zp9FORtztmE63sU24BueUVI1O1AuuCUlla8Ne5_pfA/exec";
     const ADMIN_PASS = "123";
 
-    /* Load persistent approval count */
-    let allTimeApproved = parseInt(localStorage.getItem("tt26_approved_count") || "0", 10);
+    /* Registration Day — clear old testing data, fresh start */
+    localStorage.removeItem("tt26_approved_count");
+    let allTimeApproved = 0;
     document.getElementById("approvedAllTime").textContent = allTimeApproved;
 
     /* Toast */
@@ -697,6 +807,112 @@
     document.getElementById("key").addEventListener("keydown", function (e) {
       if (e.key === "Enter") loadData();
     });
+
+    /* ══════════════════════════════════════════════
+       NOTIFICATION SYSTEM — polls for new registrations
+       ══════════════════════════════════════════════ */
+    let lastKnownCount = -1;
+    let notifInterval = null;
+    let isLoggedIn = false;
+
+    /* Chime sound via Web Audio API */
+    function playChime() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const now = ctx.currentTime;
+
+        /* Two pleasant notes: C5 → E5 */
+        [523.25, 659.25].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = freq;
+          osc.type = "sine";
+          gain.gain.setValueAtTime(0.25, now + i * 0.15);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.15 + 0.5);
+          osc.start(now + i * 0.15);
+          osc.stop(now + i * 0.15 + 0.5);
+        });
+      } catch (e) { }
+    }
+
+    /* Show notification toast */
+    function showNotifToast(msg) {
+      const t = document.getElementById("notifToast");
+      t.textContent = msg;
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 4000);
+    }
+
+    /* Ring the bell */
+    function ringBell() {
+      const bell = document.getElementById("notifBell");
+      bell.classList.remove("ringing");
+      void bell.offsetWidth; /* force reflow */
+      bell.classList.add("ringing");
+    }
+
+    /* Update badge */
+    function updateBadge(count) {
+      const badge = document.getElementById("notifBadge");
+      if (count > 0) {
+        badge.textContent = count;
+        badge.classList.add("visible");
+      } else {
+        badge.classList.remove("visible");
+      }
+    }
+
+    /* Poll for new registrations */
+    function checkForNewRegistrations() {
+      if (!isLoggedIn) return;
+
+      fetch(webAppURL + "?admin=list&key=TT26_ADMIN_123")
+        .then(res => res.json())
+        .then(data => {
+          if (data === "UNAUTHORIZED") return;
+
+          const currentCount = data.length;
+
+          if (lastKnownCount === -1) {
+            /* First poll — just record the baseline */
+            lastKnownCount = currentCount;
+            updateBadge(currentCount);
+            return;
+          }
+
+          if (currentCount > lastKnownCount) {
+            const newCount = currentCount - lastKnownCount;
+            playChime();
+            ringBell();
+            showNotifToast(`🔔 ${newCount} new registration${newCount > 1 ? 's' : ''} received!`);
+            updateBadge(currentCount);
+
+            /* Auto-reload the cards */
+            loadData();
+          }
+
+          lastKnownCount = currentCount;
+        })
+        .catch(() => { /* silent fail on poll */ });
+    }
+
+    /* Start polling after successful login */
+    const origLoadData = loadData;
+    loadData = function () {
+      origLoadData();
+      if (!isLoggedIn) {
+        const key = document.getElementById("key").value;
+        if (key === ADMIN_PASS) {
+          isLoggedIn = true;
+          /* Start polling every 30 seconds */
+          if (!notifInterval) {
+            notifInterval = setInterval(checkForNewRegistrations, 30000);
+          }
+        }
+      }
+    };
 
   </script>
 
